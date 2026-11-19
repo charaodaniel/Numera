@@ -1,0 +1,780 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Global Primitives & Helpers
+    // -------------------------------------------------------------------------
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedSignedIn() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidOptionalString(data, field, maxLen) {
+      return !(field in data) || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function isValidNullableString(data, field, maxLen) {
+      return !(field in data) || data[field] == null || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function isValidNullableTimestamp(data, field) {
+      return !(field in data) || data[field] == null || data[field] is timestamp;
+    }
+
+    function isValidOptionalNumber(data, field, maxVal) {
+      return !(field in data) || ((data[field] is int || data[field] is float) && data[field] >= 0 && data[field] <= maxVal);
+    }
+
+    function isValidPermissions(perms) {
+      return perms is map
+        && perms.keys().hasAll(['configurarRifa', 'confirmarLiberar', 'gerenciarEquipe', 'realizarSorteio'])
+        && perms.keys().hasOnly(['configurarRifa', 'confirmarLiberar', 'gerenciarEquipe', 'realizarSorteio'])
+        && perms.configurarRifa is bool
+        && perms.confirmarLiberar is bool
+        && perms.gerenciarEquipe is bool
+        && perms.realizarSorteio is bool;
+    }
+
+    // Relational Master Gate Helpers
+    function rifaPath(rifaId) {
+      return /databases/$(database)/documents/rifas/$(rifaId);
+    }
+
+    function membroPath(rifaId, uid) {
+      return /databases/$(database)/documents/rifas/$(rifaId)/membros/$(uid);
+    }
+
+    function convitePath(rifaId, conviteId) {
+      return /databases/$(database)/documents/rifas/$(rifaId)/convites/$(conviteId);
+    }
+
+    function isRifaOwner(rifaId) {
+      return isVerifiedSignedIn()
+        && exists(rifaPath(rifaId))
+        && get(rifaPath(rifaId)).data.ownerId == request.auth.uid;
+    }
+
+    function hasActiveMembro(rifaId) {
+      return isVerifiedSignedIn()
+        && exists(membroPath(rifaId, request.auth.uid))
+        && get(membroPath(rifaId, request.auth.uid)).data.status == 'ativo';
+    }
+
+    function activeMembroRole(rifaId) {
+      return get(membroPath(rifaId, request.auth.uid)).data.role;
+    }
+
+    function activeMembroPerms(rifaId) {
+      return get(membroPath(rifaId, request.auth.uid)).data.permissions;
+    }
+
+    function isRifaMember(rifaId) {
+      return isRifaOwner(rifaId) || hasActiveMembro(rifaId);
+    }
+
+    function canConfigureRifa(rifaId) {
+      return isRifaOwner(rifaId)
+        || (hasActiveMembro(rifaId) && activeMembroRole(rifaId) == 'colaborador' && activeMembroPerms(rifaId).configurarRifa == true);
+    }
+
+    function canManageTeam(rifaId) {
+      return isRifaOwner(rifaId)
+        || (hasActiveMembro(rifaId) && activeMembroRole(rifaId) == 'colaborador' && activeMembroPerms(rifaId).gerenciarEquipe == true);
+    }
+
+    function canConfirmOrRelease(rifaId) {
+      return isRifaOwner(rifaId)
+        || (hasActiveMembro(rifaId) && (
+          activeMembroRole(rifaId) == 'colaborador'
+          || (activeMembroRole(rifaId) == 'vendedor' && activeMembroPerms(rifaId).confirmarLiberar == true)
+        ));
+    }
+
+    function canManageOthersAssignments(rifaId) {
+      return isRifaOwner(rifaId)
+        || (hasActiveMembro(rifaId) && activeMembroRole(rifaId) == 'colaborador');
+    }
+
+    function canRunDraw(rifaId) {
+      return isRifaOwner(rifaId)
+        || (hasActiveMembro(rifaId) && activeMembroRole(rifaId) == 'colaborador' && activeMembroPerms(rifaId).realizarSorteio == true);
+    }
+
+    // -------------------------------------------------------------------------
+    // Entity Validation Blueprints
+    // -------------------------------------------------------------------------
+    function isValidUser(data, uid) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'name', 'email', 'photoURL', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid == uid && isValidId(data.uid)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && isValidOptionalString(data, 'photoURL', 1000)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRifaCompartilhada(data, uid, rifaId) {
+      return data.keys().hasAll(['uid', 'rifaId', 'role', 'inviteId', 'joinedAt'])
+        && data.keys().hasOnly(['uid', 'rifaId', 'role', 'inviteId', 'joinedAt'])
+        && data.uid is string && data.uid == uid && isValidId(data.uid)
+        && data.rifaId is string && data.rifaId == rifaId && isValidId(data.rifaId)
+        && data.role in ['colaborador', 'vendedor']
+        && isValidId(data.inviteId)
+        && data.joinedAt is timestamp;
+    }
+
+    function isValidConviteInbox(data, conviteId) {
+      return data.keys().hasAll(['conviteId', 'rifaId', 'rifaTitulo', 'email', 'role', 'permissions', 'status', 'createdBy', 'expiresAt', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['conviteId', 'rifaId', 'rifaTitulo', 'email', 'tipo', 'role', 'permissions', 'status', 'createdBy', 'acceptedBy', 'expiresAt', 'createdAt', 'updatedAt'])
+        && data.conviteId is string && data.conviteId == conviteId && isValidId(data.conviteId)
+        && isValidId(data.rifaId)
+        && data.rifaTitulo is string && data.rifaTitulo.size() >= 1 && data.rifaTitulo.size() <= 120
+        && (!('tipo' in data) || data.tipo in ['email', 'link'])
+        && data.email is string && data.email.size() <= 254 && (('tipo' in data && data.tipo == 'link') || data.email.size() >= 3)
+        && data.role in ['colaborador', 'vendedor']
+        && isValidPermissions(data.permissions)
+        && data.status in ['pendente', 'aceito', 'revogado']
+        && isValidId(data.createdBy)
+        && isValidOptionalString(data, 'acceptedBy', 128)
+        && data.expiresAt is timestamp
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function canAcceptConviteData(data) {
+      return ('tipo' in data && data.tipo == 'link')
+        || (request.auth.token.email is string && data.email == request.auth.token.email.lower());
+    }
+
+    function isValidRifa(data) {
+      return data.keys().hasAll([
+          'ownerId', 'titulo', 'premio', 'status', 'numeroInicial', 'numeroFinal',
+          'digitos', 'regraElegibilidade', 'permitirMultiplosPremios', 'duracaoReservaMinutos',
+          'totalNumeros', 'contagemDisponiveis', 'contagemReservados', 'contagemAtribuidos',
+          'contagemConfirmados', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'titulo', 'descricao', 'premio', 'imagemUrl', 'corPrimaria', 'status',
+          'numeroInicial', 'numeroFinal', 'digitos', 'dataPrevista', 'regraElegibilidade',
+          'permitirMultiplosPremios', 'duracaoReservaMinutos', 'totalNumeros',
+          'contagemDisponiveis', 'contagemReservados', 'contagemAtribuidos',
+          'contagemConfirmados', 'valorNumero', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.ownerId)
+        && data.titulo is string && data.titulo.size() >= 2 && data.titulo.size() <= 120
+        && isValidOptionalString(data, 'descricao', 1000)
+        && data.premio is string && data.premio.size() >= 2 && data.premio.size() <= 200
+        && isValidOptionalString(data, 'imagemUrl', 1500)
+        && (!('corPrimaria' in data) || (data.corPrimaria is string && data.corPrimaria in ['esmeralda', 'marinho', 'carvao', 'ambar', 'vinho', 'petroleo']))
+        && data.status in ['rascunho', 'ativa', 'finalizada', 'arquivada']
+        && data.numeroInicial is int && data.numeroInicial >= 0 && data.numeroInicial <= 100000
+        && data.numeroFinal is int && data.numeroFinal >= data.numeroInicial && (data.numeroFinal - data.numeroInicial + 1) <= 2000
+        && data.digitos is int && data.digitos >= 1 && data.digitos <= 8
+        && isValidOptionalString(data, 'dataPrevista', 40)
+        && data.regraElegibilidade in ['confirmados', 'atribuidos_e_confirmados']
+        && data.permitirMultiplosPremios is bool
+        && data.duracaoReservaMinutos is int && data.duracaoReservaMinutos >= 5 && data.duracaoReservaMinutos <= 43200
+        && data.totalNumeros is int && data.totalNumeros == (data.numeroFinal - data.numeroInicial + 1)
+        && data.contagemDisponiveis is int && data.contagemDisponiveis >= 0 && data.contagemDisponiveis <= data.totalNumeros
+        && data.contagemReservados is int && data.contagemReservados >= 0 && data.contagemReservados <= data.totalNumeros
+        && data.contagemAtribuidos is int && data.contagemAtribuidos >= 0 && data.contagemAtribuidos <= data.totalNumeros
+        && data.contagemConfirmados is int && data.contagemConfirmados >= 0 && data.contagemConfirmados <= data.totalNumeros
+        && (data.contagemDisponiveis + data.contagemReservados + data.contagemAtribuidos + data.contagemConfirmados) == data.totalNumeros
+        && isValidOptionalNumber(data, 'valorNumero', 1000000)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMembro(data, rifaId, memberUid) {
+      return data.keys().hasAll(['uid', 'rifaId', 'name', 'email', 'role', 'permissions', 'status', 'joinedAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'rifaId', 'name', 'email', 'role', 'permissions', 'status', 'inviteId', 'joinedAt', 'updatedAt'])
+        && data.uid is string && data.uid == memberUid && isValidId(data.uid)
+        && data.rifaId is string && data.rifaId == rifaId && isValidId(data.rifaId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.role in ['proprietario', 'colaborador', 'vendedor']
+        && isValidPermissions(data.permissions)
+        && data.status in ['ativo', 'removido']
+        && isValidOptionalString(data, 'inviteId', 128)
+        && data.joinedAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidConvite(data, rifaId) {
+      return data.keys().hasAll(['rifaId', 'rifaTitulo', 'email', 'role', 'permissions', 'status', 'createdBy', 'expiresAt', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['rifaId', 'rifaTitulo', 'email', 'tipo', 'role', 'permissions', 'status', 'createdBy', 'acceptedBy', 'expiresAt', 'createdAt', 'updatedAt'])
+        && data.rifaId is string && data.rifaId == rifaId && isValidId(data.rifaId)
+        && data.rifaTitulo is string && data.rifaTitulo.size() >= 1 && data.rifaTitulo.size() <= 120
+        && (!('tipo' in data) || data.tipo in ['email', 'link'])
+        && data.email is string && data.email.size() <= 254 && (('tipo' in data && data.tipo == 'link') || data.email.size() >= 3)
+        && data.role in ['colaborador', 'vendedor']
+        && isValidPermissions(data.permissions)
+        && data.status in ['pendente', 'aceito', 'revogado']
+        && isValidId(data.createdBy)
+        && isValidOptionalString(data, 'acceptedBy', 128)
+        && data.expiresAt is timestamp
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidParticipante(data, rifaId) {
+      return data.keys().hasAll(['rifaId', 'nome', 'telefone', 'whatsapp', 'observacoes', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['rifaId', 'nome', 'telefone', 'whatsapp', 'observacoes', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.rifaId is string && data.rifaId == rifaId && isValidId(data.rifaId)
+        && data.nome is string && data.nome.size() >= 2 && data.nome.size() <= 120
+        && data.telefone is string && data.telefone.size() <= 40
+        && data.whatsapp is string && data.whatsapp.size() <= 40
+        && data.observacoes is string && data.observacoes.size() <= 500
+        && isValidId(data.createdBy)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidNumero(data, rifaId, numeroId) {
+      return data.keys().hasAll(['rifaId', 'valor', 'indice', 'status', 'updatedAt'])
+        && data.keys().hasOnly([
+          'rifaId', 'valor', 'indice', 'status',
+          'participanteId', 'participanteNome', 'atribuicaoId',
+          'assignedBy', 'assignedByName', 'assignedAt',
+          'confirmedBy', 'confirmedAt', 'reservedUntil', 'updatedAt'
+        ])
+        && data.rifaId is string && data.rifaId == rifaId && isValidId(data.rifaId)
+        && data.valor is string && data.valor == numeroId && data.valor.size() >= 1 && data.valor.size() <= 16 && data.valor.matches('^[0-9]+$')
+        && data.indice is int && data.indice >= 0 && data.indice <= 100000
+        && data.status in ['disponivel', 'reservado', 'atribuido', 'confirmado']
+        && isValidNullableString(data, 'participanteId', 128)
+        && isValidNullableString(data, 'participanteNome', 120)
+        && isValidNullableString(data, 'atribuicaoId', 128)
+        && isValidNullableString(data, 'assignedBy', 128)
+        && isValidNullableString(data, 'assignedByName', 120)
+        && isValidNullableTimestamp(data, 'assignedAt')
+        && isValidNullableString(data, 'confirmedBy', 128)
+        && isValidNullableTimestamp(data, 'confirmedAt')
+        && isValidNullableTimestamp(data, 'reservedUntil')
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAtribuicao(data, rifaId) {
+      return data.keys().hasAll(['rifaId', 'participanteId', 'participanteNome', 'numeros', 'status', 'createdBy', 'createdByName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['rifaId', 'participanteId', 'participanteNome', 'numeros', 'status', 'observacoes', 'createdBy', 'createdByName', 'createdAt', 'updatedAt'])
+        && data.rifaId is string && data.rifaId == rifaId && isValidId(data.rifaId)
+        && isValidId(data.participanteId)
+        && data.participanteNome is string && data.participanteNome.size() >= 1 && data.participanteNome.size() <= 120
+        && data.numeros is list && data.numeros.size() >= 1 && data.numeros.size() <= 100 && data.numeros[0] is string
+        && data.status in ['reservada', 'atribuida', 'confirmada', 'liberada']
+        && isValidOptionalString(data, 'observacoes', 500)
+        && isValidId(data.createdBy)
+        && data.createdByName is string && data.createdByName.size() >= 1 && data.createdByName.size() <= 120
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSorteio(data, rifaId) {
+      return data.keys().hasAll(['rifaId', 'regraElegibilidade', 'totalElegiveis', 'quantidadePremios', 'resultados', 'realizadoPor', 'realizadoPorNome', 'realizadoEm', 'status'])
+        && data.keys().hasOnly(['rifaId', 'regraElegibilidade', 'totalElegiveis', 'quantidadePremios', 'resultados', 'realizadoPor', 'realizadoPorNome', 'realizadoEm', 'status'])
+        && data.rifaId is string && data.rifaId == rifaId && isValidId(data.rifaId)
+        && data.regraElegibilidade in ['confirmados', 'atribuidos_e_confirmados']
+        && data.totalElegiveis is int && data.totalElegiveis >= 1 && data.totalElegiveis <= 2000
+        && data.quantidadePremios is int && data.quantidadePremios >= 1 && data.quantidadePremios <= 20
+        && data.resultados is list && data.resultados.size() >= 1 && data.resultados.size() <= 20 && data.resultados[0] is map
+        && isValidId(data.realizadoPor)
+        && data.realizadoPorNome is string && data.realizadoPorNome.size() >= 1 && data.realizadoPorNome.size() <= 120
+        && data.realizadoEm is timestamp
+        && data.status == 'concluido';
+    }
+
+    function isValidEvento(data, rifaId) {
+      return data.keys().hasAll(['rifaId', 'type', 'actorUid', 'actorName', 'summary', 'createdAt'])
+        && data.keys().hasOnly(['rifaId', 'type', 'actorUid', 'actorName', 'targetId', 'summary', 'createdAt'])
+        && data.rifaId is string && data.rifaId == rifaId && isValidId(data.rifaId)
+        && data.type in [
+          'rifa_criada', 'rifa_atualizada', 'numeros_reservados', 'numeros_atribuidos',
+          'numeros_confirmados', 'numeros_liberados', 'participante_criado', 'participante_atualizado',
+          'convite_enviado', 'convite_aceito', 'membro_atualizado', 'sorteio_realizado'
+        ]
+        && isValidId(data.actorUid)
+        && data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 120
+        && isValidOptionalString(data, 'targetId', 128)
+        && data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 300
+        && data.createdAt is timestamp;
+    }
+
+    // -------------------------------------------------------------------------
+    // /users/{uid} & /users/{uid}/rifas_compartilhadas/{rifaId}
+    // -------------------------------------------------------------------------
+    match /users/{uid} {
+      allow get: if isVerifiedSignedIn() && isValidId(uid) && request.auth.uid == uid;
+      allow list: if false;
+      allow create: if isVerifiedSignedIn()
+        && isValidId(uid)
+        && request.auth.uid == uid
+        && isValidUser(incoming(), uid)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedSignedIn()
+        && isValidId(uid)
+        && request.auth.uid == uid
+        && isValidUser(incoming(), uid)
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'photoURL', 'updatedAt'])
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+
+      match /rifas_compartilhadas/{rifaId} {
+        allow get: if isVerifiedSignedIn() && isValidId(uid) && isValidId(rifaId) && request.auth.uid == uid;
+        allow list: if isVerifiedSignedIn() && resource.data.uid == request.auth.uid && request.auth.uid == uid;
+        allow create: if isVerifiedSignedIn()
+          && isValidId(uid)
+          && isValidId(rifaId)
+          && request.auth.uid == uid
+          && isValidRifaCompartilhada(incoming(), uid, rifaId)
+          && incoming().joinedAt == request.time
+          && existsAfter(membroPath(rifaId, uid));
+        allow update: if false;
+        allow delete: if isVerifiedSignedIn() && isValidId(uid) && isValidId(rifaId) && request.auth.uid == uid;
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // /convites_inbox/{conviteId}
+    // -------------------------------------------------------------------------
+    match /convites_inbox/{conviteId} {
+      allow get: if isVerifiedSignedIn() && isValidId(conviteId) && (
+        (request.auth.token.email is string && existing().email == request.auth.token.email.lower())
+        || existing().createdBy == request.auth.uid
+        || canManageTeam(existing().rifaId)
+        || ('tipo' in existing() && existing().tipo == 'link' && existing().status == 'pendente')
+      );
+
+      allow list: if isVerifiedSignedIn()
+        && request.auth.token.email is string
+        && resource.data.email == request.auth.token.email.lower();
+
+      allow create: if isVerifiedSignedIn()
+        && isValidId(conviteId)
+        && isValidConviteInbox(incoming(), conviteId)
+        && canManageTeam(incoming().rifaId)
+        && incoming().createdBy == request.auth.uid
+        && incoming().status == 'pendente'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(convitePath(incoming().rifaId, conviteId));
+
+      allow update: if isVerifiedSignedIn()
+        && isValidId(conviteId)
+        && isValidConviteInbox(incoming(), conviteId)
+        && existing().status == 'pendente'
+        && incoming().conviteId == existing().conviteId
+        && incoming().rifaId == existing().rifaId
+        && incoming().email == existing().email
+        && (!('tipo' in existing()) ? !('tipo' in incoming()) : ('tipo' in incoming() && incoming().tipo == existing().tipo))
+        && incoming().role == existing().role
+        && incoming().permissions == existing().permissions
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (canManageTeam(existing().rifaId)
+            && incoming().status == 'revogado'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+          ||
+          (canAcceptConviteData(existing())
+            && incoming().status == 'aceito'
+            && incoming().acceptedBy == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'acceptedBy', 'updatedAt'])
+            && existsAfter(membroPath(existing().rifaId, request.auth.uid)))
+        );
+
+      allow delete: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // /rifas/{rifaId}
+    // -------------------------------------------------------------------------
+    match /rifas/{rifaId} {
+      allow get: if isVerifiedSignedIn() && isValidId(rifaId) && (
+        existing().ownerId == request.auth.uid
+        || (exists(membroPath(rifaId, request.auth.uid)) && get(membroPath(rifaId, request.auth.uid)).data.status == 'ativo')
+      );
+
+      allow list: if isVerifiedSignedIn() && resource.data.ownerId == request.auth.uid;
+
+      allow create: if isVerifiedSignedIn()
+        && isValidId(rifaId)
+        && isValidRifa(incoming())
+        && incoming().ownerId == request.auth.uid
+        && incoming().status in ['rascunho', 'ativa']
+        && incoming().contagemDisponiveis == incoming().totalNumeros
+        && incoming().contagemReservados == 0
+        && incoming().contagemAtribuidos == 0
+        && incoming().contagemConfirmados == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(membroPath(rifaId, request.auth.uid));
+
+      allow update: if isVerifiedSignedIn()
+        && isValidId(rifaId)
+        && isValidRifa(incoming())
+        && existing().status != 'arquivada'
+        && incoming().ownerId == existing().ownerId
+        && incoming().numeroInicial == existing().numeroInicial
+        && incoming().numeroFinal == existing().numeroFinal
+        && incoming().digitos == existing().digitos
+        && incoming().totalNumeros == existing().totalNumeros
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (existing().ownerId == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'titulo', 'descricao', 'premio', 'imagemUrl', 'corPrimaria', 'status', 'dataPrevista',
+              'regraElegibilidade', 'permitirMultiplosPremios', 'duracaoReservaMinutos',
+              'valorNumero', 'contagemDisponiveis', 'contagemReservados',
+              'contagemAtribuidos', 'contagemConfirmados', 'updatedAt'
+            ]))
+          ||
+          (canConfigureRifa(rifaId)
+            && incoming().status != 'arquivada'
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'titulo', 'descricao', 'premio', 'imagemUrl', 'corPrimaria', 'status', 'dataPrevista',
+              'regraElegibilidade', 'permitirMultiplosPremios', 'duracaoReservaMinutos',
+              'valorNumero', 'updatedAt'
+            ]))
+          ||
+          (isRifaMember(rifaId)
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'contagemDisponiveis', 'contagemReservados', 'contagemAtribuidos',
+              'contagemConfirmados', 'updatedAt'
+            ]))
+          ||
+          (canRunDraw(rifaId)
+            && incoming().status == 'finalizada'
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'updatedAt'
+            ]))
+        );
+
+      allow delete: if false;
+
+      // -----------------------------------------------------------------------
+      // /rifas/{rifaId}/membros/{memberUid}
+      // -----------------------------------------------------------------------
+      match /membros/{memberUid} {
+        allow get: if isVerifiedSignedIn() && isValidId(rifaId) && isValidId(memberUid) && isRifaMember(rifaId);
+        allow list: if isVerifiedSignedIn() && (
+          resource.data.uid == request.auth.uid
+          || (resource.data.rifaId == rifaId && isRifaMember(rifaId))
+        );
+
+        allow create: if isVerifiedSignedIn()
+          && isValidId(rifaId)
+          && isValidId(memberUid)
+          && isValidMembro(incoming(), rifaId, memberUid)
+          && incoming().joinedAt == request.time
+          && incoming().updatedAt == request.time
+          && incoming().status == 'ativo'
+          && (
+            (memberUid == request.auth.uid
+              && incoming().role == 'proprietario'
+              && getAfter(rifaPath(rifaId)).data.ownerId == request.auth.uid)
+            ||
+            (canManageTeam(rifaId) && incoming().role in ['colaborador', 'vendedor'])
+            ||
+            (memberUid == request.auth.uid
+              && 'inviteId' in incoming()
+              && isValidId(incoming().inviteId)
+              && exists(convitePath(rifaId, incoming().inviteId))
+              && get(convitePath(rifaId, incoming().inviteId)).data.status == 'pendente'
+              && canAcceptConviteData(get(convitePath(rifaId, incoming().inviteId)).data)
+              && get(convitePath(rifaId, incoming().inviteId)).data.role == incoming().role
+              && get(convitePath(rifaId, incoming().inviteId)).data.permissions == incoming().permissions
+              && getAfter(convitePath(rifaId, incoming().inviteId)).data.status == 'aceito')
+          );
+
+        allow update: if isVerifiedSignedIn()
+          && isValidId(rifaId)
+          && isValidId(memberUid)
+          && isValidMembro(incoming(), rifaId, memberUid)
+          && canManageTeam(rifaId)
+          && existing().role != 'proprietario'
+          && incoming().role in ['colaborador', 'vendedor']
+          && incoming().uid == existing().uid
+          && incoming().rifaId == existing().rifaId
+          && incoming().email == existing().email
+          && incoming().joinedAt == existing().joinedAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'permissions', 'status', 'updatedAt']);
+
+        allow delete: if false;
+      }
+
+      // -----------------------------------------------------------------------
+      // /rifas/{rifaId}/convites/{conviteId}
+      // -----------------------------------------------------------------------
+      match /convites/{conviteId} {
+        allow get: if isVerifiedSignedIn() && isValidId(rifaId) && isValidId(conviteId) && (
+          canManageTeam(rifaId)
+          || (request.auth.token.email is string && existing().email == request.auth.token.email.lower())
+          || ('tipo' in existing() && existing().tipo == 'link' && existing().status == 'pendente')
+        );
+
+        allow list: if isVerifiedSignedIn() && resource.data.rifaId == rifaId && canManageTeam(rifaId);
+
+        allow create: if isVerifiedSignedIn()
+          && isValidId(rifaId)
+          && isValidId(conviteId)
+          && isValidConvite(incoming(), rifaId)
+          && canManageTeam(rifaId)
+          && incoming().createdBy == request.auth.uid
+          && incoming().status == 'pendente'
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isVerifiedSignedIn()
+          && isValidId(rifaId)
+          && isValidId(conviteId)
+          && isValidConvite(incoming(), rifaId)
+          && existing().status == 'pendente'
+          && incoming().rifaId == existing().rifaId
+          && incoming().email == existing().email
+          && (!('tipo' in existing()) ? !('tipo' in incoming()) : ('tipo' in incoming() && incoming().tipo == existing().tipo))
+          && incoming().role == existing().role
+          && incoming().permissions == existing().permissions
+          && incoming().createdBy == existing().createdBy
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            (canManageTeam(rifaId)
+              && incoming().status == 'revogado'
+              && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+            ||
+            (canAcceptConviteData(existing())
+              && incoming().status == 'aceito'
+              && incoming().acceptedBy == request.auth.uid
+              && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'acceptedBy', 'updatedAt'])
+              && existsAfter(membroPath(rifaId, request.auth.uid)))
+          );
+
+        allow delete: if false;
+      }
+
+      // -----------------------------------------------------------------------
+      // /rifas/{rifaId}/participantes/{participanteId}
+      // -----------------------------------------------------------------------
+      match /participantes/{participanteId} {
+        allow get: if isVerifiedSignedIn() && isValidId(rifaId) && isValidId(participanteId) && isRifaMember(rifaId);
+        allow list: if isVerifiedSignedIn() && resource.data.rifaId == rifaId && isRifaMember(rifaId);
+
+        allow create: if isVerifiedSignedIn()
+          && isValidId(rifaId)
+          && isValidId(participanteId)
+          && isValidParticipante(incoming(), rifaId)
+          && isRifaMember(rifaId)
+          && get(rifaPath(rifaId)).data.status != 'arquivada'
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isVerifiedSignedIn()
+          && isValidId(rifaId)
+          && isValidId(participanteId)
+          && isValidParticipante(incoming(), rifaId)
+          && isRifaMember(rifaId)
+          && get(rifaPath(rifaId)).data.status != 'arquivada'
+          && (canManageOthersAssignments(rifaId) || existing().createdBy == request.auth.uid)
+          && incoming().rifaId == existing().rifaId
+          && incoming().createdBy == existing().createdBy
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'telefone', 'whatsapp', 'observacoes', 'updatedAt']);
+
+        allow delete: if false;
+      }
+
+      // -----------------------------------------------------------------------
+      // /rifas/{rifaId}/numeros/{numeroId}
+      // -----------------------------------------------------------------------
+      match /numeros/{numeroId} {
+        allow get: if isVerifiedSignedIn() && isValidId(rifaId) && isValidId(numeroId) && isRifaMember(rifaId);
+        allow list: if isVerifiedSignedIn() && resource.data.rifaId == rifaId && isRifaMember(rifaId);
+
+        allow create: if isVerifiedSignedIn()
+          && isValidId(rifaId)
+          && isValidId(numeroId)
+          && isValidNumero(incoming(), rifaId, numeroId)
+          && (
+            (isRifaOwner(rifaId)
+              && incoming().indice >= get(rifaPath(rifaId)).data.numeroInicial
+              && incoming().indice <= get(rifaPath(rifaId)).data.numeroFinal)
+            ||
+            (existsAfter(rifaPath(rifaId))
+              && getAfter(rifaPath(rifaId)).data.ownerId == request.auth.uid
+              && incoming().indice >= getAfter(rifaPath(rifaId)).data.numeroInicial
+              && incoming().indice <= getAfter(rifaPath(rifaId)).data.numeroFinal)
+          )
+          && incoming().status == 'disponivel'
+          && incoming().updatedAt == request.time;
+
+        allow update: if isVerifiedSignedIn()
+          && isValidId(rifaId)
+          && isValidId(numeroId)
+          && isValidNumero(incoming(), rifaId, numeroId)
+          && isRifaMember(rifaId)
+          && get(rifaPath(rifaId)).data.status in ['rascunho', 'ativa']
+          && incoming().rifaId == existing().rifaId
+          && incoming().valor == existing().valor
+          && incoming().indice == existing().indice
+          && incoming().updatedAt == request.time
+          && (
+            (existing().status == 'disponivel'
+              && (
+                incoming().status in ['reservado', 'atribuido']
+                || (incoming().status == 'confirmado' && canConfirmOrRelease(rifaId))
+              )
+              && incoming().assignedBy == request.auth.uid
+              && incoming().diff(existing()).affectedKeys().hasOnly([
+                'status', 'participanteId', 'participanteNome', 'atribuicaoId',
+                'assignedBy', 'assignedByName', 'assignedAt', 'confirmedBy',
+                'confirmedAt', 'reservedUntil', 'updatedAt'
+              ]))
+            ||
+            (existing().status in ['reservado', 'atribuido']
+              && incoming().status == 'confirmado'
+              && canConfirmOrRelease(rifaId)
+              && incoming().confirmedBy == request.auth.uid
+              && incoming().diff(existing()).affectedKeys().hasOnly([
+                'status', 'confirmedBy', 'confirmedAt', 'reservedUntil', 'updatedAt'
+              ]))
+            ||
+            (existing().status == 'reservado'
+              && incoming().status == 'atribuido'
+              && (canManageOthersAssignments(rifaId) || existing().assignedBy == request.auth.uid)
+              && incoming().diff(existing()).affectedKeys().hasOnly([
+                'status', 'reservedUntil', 'updatedAt'
+              ]))
+            ||
+            (existing().status in ['reservado', 'atribuido', 'confirmado']
+              && incoming().status == 'disponivel'
+              && (
+                canConfirmOrRelease(rifaId)
+                || (existing().status in ['reservado', 'atribuido'] && existing().assignedBy == request.auth.uid)
+              )
+              && incoming().diff(existing()).affectedKeys().hasOnly([
+                'status', 'participanteId', 'participanteNome', 'atribuicaoId',
+                'assignedBy', 'assignedByName', 'assignedAt', 'confirmedBy',
+                'confirmedAt', 'reservedUntil', 'updatedAt'
+              ]))
+          );
+
+        allow delete: if false;
+      }
+
+      // -----------------------------------------------------------------------
+      // /rifas/{rifaId}/atribuicoes/{atribuicaoId}
+      // -----------------------------------------------------------------------
+      match /atribuicoes/{atribuicaoId} {
+        allow get: if isVerifiedSignedIn() && isValidId(rifaId) && isValidId(atribuicaoId) && isRifaMember(rifaId);
+        allow list: if isVerifiedSignedIn() && resource.data.rifaId == rifaId && isRifaMember(rifaId);
+
+        allow create: if isVerifiedSignedIn()
+          && isValidId(rifaId)
+          && isValidId(atribuicaoId)
+          && isValidAtribuicao(incoming(), rifaId)
+          && isRifaMember(rifaId)
+          && get(rifaPath(rifaId)).data.status in ['rascunho', 'ativa']
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isVerifiedSignedIn()
+          && isValidId(rifaId)
+          && isValidId(atribuicaoId)
+          && isValidAtribuicao(incoming(), rifaId)
+          && isRifaMember(rifaId)
+          && existing().status != 'liberada'
+          && incoming().rifaId == existing().rifaId
+          && incoming().participanteId == existing().participanteId
+          && incoming().participanteNome == existing().participanteNome
+          && incoming().numeros == existing().numeros
+          && incoming().createdBy == existing().createdBy
+          && incoming().createdByName == existing().createdByName
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            canConfirmOrRelease(rifaId)
+            || (existing().createdBy == request.auth.uid && incoming().status in ['atribuida', 'liberada'])
+          )
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'observacoes', 'updatedAt']);
+
+        allow delete: if false;
+      }
+
+      // -----------------------------------------------------------------------
+      // /rifas/{rifaId}/sorteios/{sorteioId} (Immutable Audit Trail)
+      // -----------------------------------------------------------------------
+      match /sorteios/{sorteioId} {
+        allow get: if isVerifiedSignedIn() && isValidId(rifaId) && isValidId(sorteioId) && isRifaMember(rifaId);
+        allow list: if isVerifiedSignedIn() && resource.data.rifaId == rifaId && isRifaMember(rifaId);
+
+        allow create: if isVerifiedSignedIn()
+          && isValidId(rifaId)
+          && isValidId(sorteioId)
+          && isValidSorteio(incoming(), rifaId)
+          && canRunDraw(rifaId)
+          && get(rifaPath(rifaId)).data.status != 'arquivada'
+          && incoming().realizadoPor == request.auth.uid
+          && incoming().realizadoEm == request.time;
+
+        allow update: if false;
+        allow delete: if false;
+      }
+
+      // -----------------------------------------------------------------------
+      // /rifas/{rifaId}/eventos/{eventoId} (Immutable Audit Log)
+      // -----------------------------------------------------------------------
+      match /eventos/{eventoId} {
+        allow get: if isVerifiedSignedIn() && isValidId(rifaId) && isValidId(eventoId) && isRifaMember(rifaId);
+        allow list: if isVerifiedSignedIn() && resource.data.rifaId == rifaId && isRifaMember(rifaId);
+
+        allow create: if isVerifiedSignedIn()
+          && isValidId(rifaId)
+          && isValidId(eventoId)
+          && isValidEvento(incoming(), rifaId)
+          && (
+            isRifaMember(rifaId)
+            || getAfter(rifaPath(rifaId)).data.ownerId == request.auth.uid
+            || existsAfter(membroPath(rifaId, request.auth.uid))
+          )
+          && incoming().actorUid == request.auth.uid
+          && incoming().createdAt == request.time;
+
+        allow update: if false;
+        allow delete: if false;
+      }
+    }
+  }
+}

@@ -1,0 +1,720 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Authenticated user profile stored privately per UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "name", "email", "createdAt", "updatedAt"]
+    },
+    "RifaCompartilhada": {
+      "title": "RifaCompartilhada",
+      "description": "User-scoped pointer to a raffle shared via accepted team invitation.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "rifaId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["colaborador", "vendedor"]
+        },
+        "inviteId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "joinedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "rifaId", "role", "inviteId", "joinedAt"]
+    },
+    "ConviteInbox": {
+      "title": "ConviteInbox",
+      "description": "Email-indexed invitation pointer for fast pending invitation lookup.",
+      "type": "object",
+      "properties": {
+        "conviteId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "rifaId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "rifaTitulo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 254
+        },
+        "tipo": {
+          "type": "string",
+          "enum": ["email", "link"]
+        },
+        "role": {
+          "type": "string",
+          "enum": ["colaborador", "vendedor"]
+        },
+        "permissions": {
+          "type": "object"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pendente", "aceito", "revogado"]
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "acceptedBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "conviteId",
+        "rifaId",
+        "rifaTitulo",
+        "email",
+        "role",
+        "permissions",
+        "status",
+        "createdBy",
+        "expiresAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Rifa": {
+      "title": "Rifa",
+      "description": "Raffle organization campaign with sequential numbered tickets and rules.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "titulo": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "descricao": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "premio": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 200
+        },
+        "imagemUrl": {
+          "type": "string",
+          "maxLength": 1500
+        },
+        "corPrimaria": {
+          "type": "string",
+          "description": "Primary visual color palette identifier for this raffle's cards.",
+          "enum": ["esmeralda", "marinho", "carvao", "ambar", "vinho", "petroleo"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["rascunho", "ativa", "finalizada", "arquivada"]
+        },
+        "numeroInicial": {
+          "type": "integer"
+        },
+        "numeroFinal": {
+          "type": "integer"
+        },
+        "digitos": {
+          "type": "integer"
+        },
+        "dataPrevista": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "regraElegibilidade": {
+          "type": "string",
+          "enum": ["confirmados", "atribuidos_e_confirmados"]
+        },
+        "permitirMultiplosPremios": {
+          "type": "boolean"
+        },
+        "duracaoReservaMinutos": {
+          "type": "integer"
+        },
+        "totalNumeros": {
+          "type": "integer"
+        },
+        "contagemDisponiveis": {
+          "type": "integer"
+        },
+        "contagemReservados": {
+          "type": "integer"
+        },
+        "contagemAtribuidos": {
+          "type": "integer"
+        },
+        "contagemConfirmados": {
+          "type": "integer"
+        },
+        "valorNumero": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "titulo",
+        "premio",
+        "status",
+        "numeroInicial",
+        "numeroFinal",
+        "digitos",
+        "regraElegibilidade",
+        "permitirMultiplosPremios",
+        "duracaoReservaMinutos",
+        "totalNumeros",
+        "contagemDisponiveis",
+        "contagemReservados",
+        "contagemAtribuidos",
+        "contagemConfirmados",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Membro": {
+      "title": "Membro",
+      "description": "Authorized team member for a specific raffle with granular role and permissions.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "rifaId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "role": {
+          "type": "string",
+          "enum": ["proprietario", "colaborador", "vendedor"]
+        },
+        "permissions": {
+          "type": "object"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["ativo", "removido"]
+        },
+        "inviteId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "joinedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "rifaId", "name", "email", "role", "permissions", "status", "joinedAt", "updatedAt"]
+    },
+    "Convite": {
+      "title": "Convite",
+      "description": "Email invitation to join a raffle team as collaborator or seller.",
+      "type": "object",
+      "properties": {
+        "rifaId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "rifaTitulo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 254
+        },
+        "tipo": {
+          "type": "string",
+          "enum": ["email", "link"]
+        },
+        "role": {
+          "type": "string",
+          "enum": ["colaborador", "vendedor"]
+        },
+        "permissions": {
+          "type": "object"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pendente", "aceito", "revogado"]
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "acceptedBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "rifaId",
+        "rifaTitulo",
+        "email",
+        "role",
+        "permissions",
+        "status",
+        "createdBy",
+        "expiresAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Participante": {
+      "title": "Participante",
+      "description": "Raffle participant contact record scoped to authorized team members.",
+      "type": "object",
+      "properties": {
+        "rifaId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "nome": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "telefone": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "whatsapp": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "observacoes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["rifaId", "nome", "telefone", "whatsapp", "observacoes", "createdBy", "createdAt", "updatedAt"]
+    },
+    "Numero": {
+      "title": "Numero",
+      "description": "Unique sequential ticket number within a raffle.",
+      "type": "object",
+      "properties": {
+        "rifaId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "valor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16,
+          "pattern": "^[0-9]+$"
+        },
+        "indice": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["disponivel", "reservado", "atribuido", "confirmado"]
+        },
+        "participanteId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "participanteNome": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "atribuicaoId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "assignedBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "assignedByName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "assignedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "confirmedBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "confirmedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "reservedUntil": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["rifaId", "valor", "indice", "status", "updatedAt"]
+    },
+    "Atribuicao": {
+      "title": "Atribuicao",
+      "description": "Batch assignment or reservation of one or more numbers to a participant.",
+      "type": "object",
+      "properties": {
+        "rifaId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "participanteId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "participanteNome": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "numeros": {
+          "type": "array"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["reservada", "atribuida", "confirmada", "liberada"]
+        },
+        "observacoes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdByName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "rifaId",
+        "participanteId",
+        "participanteNome",
+        "numeros",
+        "status",
+        "createdBy",
+        "createdByName",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Sorteio": {
+      "title": "Sorteio",
+      "description": "Immutable draw result record with eligibility rule, timestamp, and winners.",
+      "type": "object",
+      "properties": {
+        "rifaId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "regraElegibilidade": {
+          "type": "string",
+          "enum": ["confirmados", "atribuidos_e_confirmados"]
+        },
+        "totalElegiveis": {
+          "type": "integer"
+        },
+        "quantidadePremios": {
+          "type": "integer"
+        },
+        "resultados": {
+          "type": "array"
+        },
+        "realizadoPor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "realizadoPorNome": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "realizadoEm": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["concluido"]
+        }
+      },
+      "required": [
+        "rifaId",
+        "regraElegibilidade",
+        "totalElegiveis",
+        "quantidadePremios",
+        "resultados",
+        "realizadoPor",
+        "realizadoPorNome",
+        "realizadoEm",
+        "status"
+      ]
+    },
+    "Evento": {
+      "title": "Evento",
+      "description": "Immutable audit log entry for raffle mutations.",
+      "type": "object",
+      "properties": {
+        "rifaId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "rifa_criada",
+            "rifa_atualizada",
+            "numeros_reservados",
+            "numeros_atribuidos",
+            "numeros_confirmados",
+            "numeros_liberados",
+            "participante_criado",
+            "participante_atualizado",
+            "convite_enviado",
+            "convite_aceito",
+            "membro_atualizado",
+            "sorteio_realizado"
+          ]
+        },
+        "actorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "actorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "targetId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["rifaId", "type", "actorUid", "actorName", "summary", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Private authenticated user profile."
+    },
+    "/users/{uid}/rifas_compartilhadas/{rifaId}": {
+      "schema": { "$ref": "#/entities/RifaCompartilhada" },
+      "description": "Shared raffles accessible to the user."
+    },
+    "/convites_inbox/{conviteId}": {
+      "schema": { "$ref": "#/entities/ConviteInbox" },
+      "description": "Email-indexed invitations for pending invite discovery."
+    },
+    "/rifas/{rifaId}": {
+      "schema": { "$ref": "#/entities/Rifa" },
+      "description": "Raffles created by owners."
+    },
+    "/rifas/{rifaId}/membros/{uid}": {
+      "schema": { "$ref": "#/entities/Membro" },
+      "description": "Authorized collaborators and sellers for a raffle."
+    },
+    "/rifas/{rifaId}/convites/{conviteId}": {
+      "schema": { "$ref": "#/entities/Convite" },
+      "description": "Team invitations scoped to a raffle."
+    },
+    "/rifas/{rifaId}/participantes/{participanteId}": {
+      "schema": { "$ref": "#/entities/Participante" },
+      "description": "Participants registered in a raffle."
+    },
+    "/rifas/{rifaId}/numeros/{numeroId}": {
+      "schema": { "$ref": "#/entities/Numero" },
+      "description": "Sequential numbered tickets inside a raffle."
+    },
+    "/rifas/{rifaId}/atribuicoes/{atribuicaoId}": {
+      "schema": { "$ref": "#/entities/Atribuicao" },
+      "description": "Number assignment batches linking participants and numbers."
+    },
+    "/rifas/{rifaId}/sorteios/{sorteioId}": {
+      "schema": { "$ref": "#/entities/Sorteio" },
+      "description": "Immutable raffle draw outcomes."
+    },
+    "/rifas/{rifaId}/eventos/{eventoId}": {
+      "schema": { "$ref": "#/entities/Evento" },
+      "description": "Immutable audit events for raffle actions."
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix Numera",
+  "description": "Aplicativo web progressivo para organizar rifas, gerar números sequenciais, cadastrar participantes, gerenciar colaboradores e realizar sorteios.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
