@@ -39,6 +39,7 @@ import {
   type Sorteio,
 } from '../types/numera';
 import { getRifaPalette } from '../lib/rifaPalettes';
+import { RifaSummaryDashboard } from '../components/RifaSummaryDashboard';
 import { RifaShortcutCards } from '../components/RifaShortcutCards';
 import { RifaResumoTab, type RifaNavTab } from '../components/RifaResumoTab';
 import { RifaNumerosTab } from '../components/RifaNumerosTab';
@@ -260,6 +261,15 @@ export const RifaDetailView: React.FC<RifaDetailViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Executive Summary Dashboard */}
+      <RifaSummaryDashboard
+        rifa={rifa}
+        numeros={numeros}
+        capabilities={capabilities}
+        onOpenNumeros={() => setActiveTab('numeros')}
+        onOpenConfiguracoes={() => setActiveTab('configuracoes')}
+      />
 
       {/* Quick Action Cards */}
       <RifaShortcutCards
